@@ -66,7 +66,7 @@ public struct CodeEditor {
   let layout  : LayoutConfiguration
 
   @Binding private var text:     String
-  @Binding private var location: Location
+  private var location: Binding<Location>?
   @Binding private var messages: Set<Located<Message>>
 
   /// Creates a fully configured code editor.
@@ -87,7 +87,7 @@ public struct CodeEditor {
               layout:   LayoutConfiguration = .standard)
   {
     self._text     = text
-    self._location = location ?? Binding {  Location() } set: { _ in }
+    self.location = location
     self._messages = messages
     self.language  = language
     self.layout    = layout
@@ -100,8 +100,8 @@ public struct CodeEditor {
     ///
     fileprivate var lastMessages: Set<Located<Message>> = Set()
 
-    init(_ text: Binding<String>) {
-      self._text = text
+      init(_ text: Binding<String>) {
+          self._text = text
     }
   }
 }
@@ -124,22 +124,22 @@ extension CodeEditor: UIViewRepresentable {
       delegate.selectionDidChange = { textView in
         selectionDidChange(textView)
         DispatchQueue.main.async {
-          location.selections = [textView.selectedRange]
+            location?.wrappedValue.selections = [textView.selectedRange]
         }
       }
       delegate.didScroll = { scrollView in
         DispatchQueue.main.async {
-          location.verticalScrollFraction = scrollView.verticalScrollFraction
+          location?.wrappedValue.verticalScrollFraction = scrollView.verticalScrollFraction
         }
       }
     }
-    codeView.selectedRange = location.selections.first ?? NSRange(location: 0, length: 0)
+    codeView.selectedRange = location?.wrappedValue.selections.first ?? NSRange(location: 0, length: 0)
 
     // We can't set the scroll position right away as the views are not properly sized yet. Thus, this needs to be
     // delayed.
     // TODO: The scroll fraction assignment still happens to soon if the initialisisation takes a long time, because we loaded a large file. It be better if we could deterministically determine when initialisation is entirely finished and then set the scroll fraction at that point.
     DispatchQueue.main.async {
-      codeView.verticalScrollFraction = location.verticalScrollFraction
+      codeView.verticalScrollFraction = location?.wrappedValue.verticalScrollFraction
     }
 
     // Report the initial message set
@@ -165,13 +165,14 @@ extension CodeEditor: UIViewRepresentable {
   }
 
   public func makeCoordinator() -> Coordinator {
-    return Coordinator($text)
+    return Coordinator($text, location: $location)
   }
 
   public final class Coordinator: _Coordinator {
 
     func textDidChange(_ textView: UITextView) {
       self.text = textView.text
+        location.selections = [textView.selectedRange]
     }
 
   }
@@ -210,17 +211,21 @@ extension CodeEditor: NSViewRepresentable {
       delegate.selectionDidChange = { textView in
         selectionDidChange(textView)
         DispatchQueue.main.async {
-          location.selections = textView.selectedRanges.map{ $0.rangeValue }
+            location?.wrappedValue.selections = textView.selectedRanges.map{ $0.rangeValue }
         }
       }
     }
-    codeView.selectedRanges = location.selections.map{ NSValue(range: $0) }
+      if let selections = location?.wrappedValue.selections {
+        codeView.selectedRanges = selections.map{ NSValue(range: $0) }
+      }
 
     // We can't set the scroll position right away as the views are not properly sized yet. Thus, this needs to be
     // delayed.
     // TODO: The scroll fraction assignment still happens to soon if the initialisisation takes a long time, because we loaded a large file. It be better if we could deterministically determine when initialisation is entirely finished and then set the scroll fraction at that point.
     DispatchQueue.main.async {
-      scrollView.verticalScrollFraction = location.verticalScrollFraction
+        if let verticalScrollFraction = location?.wrappedValue.verticalScrollFraction {
+          scrollView.verticalScrollFraction = verticalScrollFraction
+        }
     }
 
     // The minimap needs to be vertically positioned in dependence on the scroll position of the main code view and
@@ -230,7 +235,7 @@ extension CodeEditor: NSViewRepresentable {
                                                object: scrollView.contentView,
                                                queue: .main){ _ in
         DispatchQueue.main.async {
-          location.verticalScrollFraction = scrollView.verticalScrollFraction
+          location?.wrappedValue.verticalScrollFraction = scrollView.verticalScrollFraction
         }
         codeView.adjustScrollPositionOfMinimap()
       }
@@ -245,13 +250,13 @@ extension CodeEditor: NSViewRepresentable {
     guard let codeView = scrollView.documentView as? CodeView else { return }
     
     let theme                      = context.environment.codeEditorTheme,
-        selections                 = location.selections.map{ NSValue(range: $0) }
+        selections                 = location?.wrappedValue.selections.map{ NSValue(range: $0) }
 
     updateMessages(in: codeView, with: context)
     if text != codeView.string { codeView.string = text }  // Hoping for the string comparison fast path...
-    if selections != codeView.selectedRanges { codeView.selectedRanges = selections }
-    if location.verticalScrollFraction - scrollView.verticalScrollFraction > 0.0001 {
-      scrollView.verticalScrollFraction = location.verticalScrollFraction
+    if let selections = selections, selections != codeView.selectedRanges { codeView.selectedRanges = selections }
+      if let verticalScrollFraction = location?.wrappedValue.verticalScrollFraction, verticalScrollFraction - scrollView.verticalScrollFraction > 0.0001 {
+          scrollView.verticalScrollFraction = verticalScrollFraction
     }
     if theme.id != codeView.theme.id { codeView.theme = theme }
     if layout != codeView.viewLayout { codeView.viewLayout = layout }
