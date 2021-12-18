@@ -139,7 +139,9 @@ extension CodeEditor: UIViewRepresentable {
     // delayed.
     // TODO: The scroll fraction assignment still happens to soon if the initialisisation takes a long time, because we loaded a large file. It be better if we could deterministically determine when initialisation is entirely finished and then set the scroll fraction at that point.
     DispatchQueue.main.async {
-      codeView.verticalScrollFraction = location?.wrappedValue.verticalScrollFraction
+        if let verticalScrollFraction = location?.wrappedValue.verticalScrollFraction {
+            codeView.verticalScrollFraction = verticalScrollFraction
+        }
     }
 
     // Report the initial message set
@@ -152,12 +154,12 @@ extension CodeEditor: UIViewRepresentable {
     guard let codeView = textView as? CodeView else { return }
     
     let theme     = context.environment.codeEditorTheme,
-        selection = location.selections.first ?? NSRange(location: 0, length: 0)
+        selection = location?.wrappedValue.selections.first ?? NSRange(location: 0, length: 0)
 
     updateMessages(in: codeView, with: context)
     if text != textView.text { textView.text = text }  // Hoping for the string comparison fast path...
     if selection != codeView.selectedRange { codeView.selectedRange = selection }
-    if location.verticalScrollFraction - textView.verticalScrollFraction > 0.0001 {
+      if let verticalScrollFraction = location?.wrappedValue.verticalScrollFraction, verticalScrollFraction - textView.verticalScrollFraction > 0.0001 {
       textView.verticalScrollFraction = location.verticalScrollFraction
     }
     if theme.id != codeView.theme.id { codeView.theme = theme }
@@ -165,14 +167,13 @@ extension CodeEditor: UIViewRepresentable {
   }
 
   public func makeCoordinator() -> Coordinator {
-    return Coordinator($text, location: $location)
+    return Coordinator($text)
   }
 
   public final class Coordinator: _Coordinator {
 
     func textDidChange(_ textView: UITextView) {
       self.text = textView.text
-        location.selections = [textView.selectedRange]
     }
 
   }
