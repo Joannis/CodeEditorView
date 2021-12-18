@@ -153,12 +153,11 @@ extension CodeEditor: UIViewRepresentable {
   public func updateUIView(_ textView: UITextView, context: Context) {
     guard let codeView = textView as? CodeView else { return }
     
-    let theme     = context.environment.codeEditorTheme,
-        selection = location?.wrappedValue.selections.first ?? NSRange(location: 0, length: 0)
+    let theme     = context.environment.codeEditorTheme
 
     updateMessages(in: codeView, with: context)
     if text != textView.text { textView.text = text }  // Hoping for the string comparison fast path...
-    if selection != codeView.selectedRange { codeView.selectedRange = selection }
+//    if selection != codeView.selectedRange { codeView.selectedRange = selection }
       if let verticalScrollFraction = location?.wrappedValue.verticalScrollFraction, verticalScrollFraction - textView.verticalScrollFraction > 0.0001 {
       textView.verticalScrollFraction = verticalScrollFraction
     }
