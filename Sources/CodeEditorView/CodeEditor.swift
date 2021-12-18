@@ -160,7 +160,7 @@ extension CodeEditor: UIViewRepresentable {
     if text != textView.text { textView.text = text }  // Hoping for the string comparison fast path...
     if selection != codeView.selectedRange { codeView.selectedRange = selection }
       if let verticalScrollFraction = location?.wrappedValue.verticalScrollFraction, verticalScrollFraction - textView.verticalScrollFraction > 0.0001 {
-      textView.verticalScrollFraction = location.verticalScrollFraction
+      textView.verticalScrollFraction = verticalScrollFraction
     }
     if theme.id != codeView.theme.id { codeView.theme = theme }
     if layout != codeView.viewLayout { codeView.viewLayout = layout }
