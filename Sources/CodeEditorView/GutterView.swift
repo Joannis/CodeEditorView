@@ -321,8 +321,7 @@ extension GutterView {
         #if os(iOS)
 
         // Highlight line numbers as we don't have line background highlighting on iOS.
-        if let messageBundle = lineMap.lines[line].info?.messages
-        {
+          if let messageBundle = lineMap.lines[line].info?.messages, !messageBundle.messages.isEmpty {
           let themeColour = theme(messagesByCategory(messageBundle.messages)[0].key).colour,
               colour      = selectedLines.contains(line) ? themeColour : themeColour.withAlphaComponent(0.5)
           attributes.updateValue(colour, forKey: .foregroundColor)
