@@ -35,9 +35,9 @@ public struct CodeEditor {
     public static let standard = LayoutConfiguration(showMinimap: true)
   }
 
-  /// Specification of a text editing location; i.e., text selection and scroll position.
+  /// Specification of a text editing position; i.e., text selection and scroll position.
   ///
-  public struct Location {
+  public struct Position {
 
     /// Specification of a list of selection ranges.
     ///
@@ -66,14 +66,14 @@ public struct CodeEditor {
   let layout  : LayoutConfiguration
 
   @Binding private var text:     String
-  private var location: Binding<Location>?
+  @Binding private var position: Position
   @Binding private var messages: Set<Located<Message>>
 
   /// Creates a fully configured code editor.
   ///
   /// - Parameters:
   ///   - text: Binding to the edited text.
-  ///   - location: Optional binding to the current edit location.
+  ///   - position: Binding to the current edit position.
   ///   - messages: Binding to the messages reported at the appropriate lines of the edited text. NB: Messages
   ///               processing and display is relatively expensive. Hence, there should only be a limited number of
   ///               simultaneous messages and they shouldn't change to frequently.
@@ -81,27 +81,35 @@ public struct CodeEditor {
   ///   - layout: Layout configuration determining the visible elements of the editor view.
   ///
   public init(text:     Binding<String>,
-              location: Binding<Location>? = nil,
+              position: Binding<Position>,
               messages: Binding<Set<Located<Message>>>,
               language: LanguageConfiguration = .none,
               layout:   LayoutConfiguration = .standard)
   {
     self._text     = text
-    self.location = location
+    self._position = position
     self._messages = messages
     self.language  = language
     self.layout    = layout
   }
 
   public class _Coordinator {
-    @Binding var text: String
+    @Binding fileprivate var text:     String
+    @Binding fileprivate var position: Position
+
+    /// In order to avoid update cycles, where view code tries to update SwiftUI state variables (such as the view's
+    /// bindings) during a SwiftUI view update, we use `updatingView` as a flag that indicates whether the view is
+    /// being updated, and hence, whether state updates ought to be avoided or delayed.
+    ///
+    fileprivate var updatingView = false
 
     /// This is the last observed value of `messages`, to enable us to compute the difference in the next update.
     ///
     fileprivate var lastMessages: Set<Located<Message>> = Set()
 
-      init(_ text: Binding<String>) {
-          self._text = text
+    init(_ text: Binding<String>, _ position: Binding<Position>) {
+      self._text     = text
+      self._position = position
     }
   }
 }
@@ -112,6 +120,7 @@ public struct CodeEditor {
 // MARK: UIKit version
 
 extension CodeEditor: UIViewRepresentable {
+
   public func makeUIView(context: Context) -> UITextView {
     let codeView = CodeView(frame: CGRect(x: 0, y: 0, width: 100, height: 40),
                             with: language,
@@ -120,28 +129,22 @@ extension CodeEditor: UIViewRepresentable {
 
     codeView.text = text
     if let delegate = codeView.delegate as? CodeViewDelegate {
+
       delegate.textDidChange      = context.coordinator.textDidChange
       delegate.selectionDidChange = { textView in
         selectionDidChange(textView)
-        DispatchQueue.main.async {
-            location?.wrappedValue.selections = [textView.selectedRange]
-        }
+        context.coordinator.selectionDidChange(textView)
       }
-      delegate.didScroll = { scrollView in
-        DispatchQueue.main.async {
-          location?.wrappedValue.verticalScrollFraction = scrollView.verticalScrollFraction
-        }
-      }
+      delegate.didScroll = context.coordinator.scrollPositionDidChange
+
     }
-    codeView.selectedRange = location?.wrappedValue.selections.first ?? NSRange(location: 0, length: 0)
+    codeView.selectedRange = position.selections.first ?? NSRange(location: 0, length: 0)
 
     // We can't set the scroll position right away as the views are not properly sized yet. Thus, this needs to be
     // delayed.
     // TODO: The scroll fraction assignment still happens to soon if the initialisisation takes a long time, because we loaded a large file. It be better if we could deterministically determine when initialisation is entirely finished and then set the scroll fraction at that point.
     DispatchQueue.main.async {
-        if let verticalScrollFraction = location?.wrappedValue.verticalScrollFraction {
-            codeView.verticalScrollFraction = verticalScrollFraction
-        }
+      codeView.verticalScrollFraction = position.verticalScrollFraction
     }
 
     // Report the initial message set
@@ -152,29 +155,49 @@ extension CodeEditor: UIViewRepresentable {
 
   public func updateUIView(_ textView: UITextView, context: Context) {
     guard let codeView = textView as? CodeView else { return }
-    
-    let theme     = context.environment.codeEditorTheme
+    context.coordinator.updatingView = true
+
+    let theme     = context.environment.codeEditorTheme,
+        selection = position.selections.first ?? NSRange(location: 0, length: 0)
 
     updateMessages(in: codeView, with: context)
     if text != textView.text { textView.text = text }  // Hoping for the string comparison fast path...
-//    if selection != codeView.selectedRange { codeView.selectedRange = selection }
-      if let verticalScrollFraction = location?.wrappedValue.verticalScrollFraction, verticalScrollFraction - textView.verticalScrollFraction > 0.0001 {
-      textView.verticalScrollFraction = verticalScrollFraction
+    if selection != codeView.selectedRange { codeView.selectedRange = selection }
+    if abs(position.verticalScrollFraction - textView.verticalScrollFraction) > 0.0001 {
+      textView.verticalScrollFraction = position.verticalScrollFraction
     }
     if theme.id != codeView.theme.id { codeView.theme = theme }
     if layout != codeView.viewLayout { codeView.viewLayout = layout }
+
+    context.coordinator.updatingView = false
   }
 
   public func makeCoordinator() -> Coordinator {
-    return Coordinator($text)
+    return Coordinator($text, $position)
   }
 
   public final class Coordinator: _Coordinator {
 
     func textDidChange(_ textView: UITextView) {
-      self.text = textView.text
+      guard !updatingView else { return }
+
+      if self.text != textView.text { self.text = textView.text }
     }
 
+    func selectionDidChange(_ textView: UITextView) {
+      guard !updatingView else { return }
+
+      let newValue = [textView.selectedRange]
+      if self.position.selections != newValue { self.position.selections = newValue }
+    }
+
+    func scrollPositionDidChange(_ scrollView: UIScrollView) {
+      guard !updatingView else { return }
+
+      if abs(position.verticalScrollFraction - scrollView.verticalScrollFraction) > 0.0001 {
+        position.verticalScrollFraction = scrollView.verticalScrollFraction
+      }
+    }
   }
 }
 
@@ -184,6 +207,7 @@ extension CodeEditor: UIViewRepresentable {
 // MARK: AppKit version
 
 extension CodeEditor: NSViewRepresentable {
+
   public func makeNSView(context: Context) -> NSScrollView {
 
     // Set up scroll view
@@ -207,25 +231,21 @@ extension CodeEditor: NSViewRepresentable {
 
     codeView.string = text
     if let delegate = codeView.delegate as? CodeViewDelegate {
+
       delegate.textDidChange      = context.coordinator.textDidChange
       delegate.selectionDidChange = { textView in
         selectionDidChange(textView)
-        DispatchQueue.main.async {
-            location?.wrappedValue.selections = textView.selectedRanges.map{ $0.rangeValue }
-        }
+        context.coordinator.selectionDidChange(textView)
       }
+
     }
-      if let selections = location?.wrappedValue.selections {
-        codeView.selectedRanges = selections.map{ NSValue(range: $0) }
-      }
+    codeView.selectedRanges = position.selections.map{ NSValue(range: $0) }
 
     // We can't set the scroll position right away as the views are not properly sized yet. Thus, this needs to be
     // delayed.
-    // TODO: The scroll fraction assignment still happens to soon if the initialisisation takes a long time, because we loaded a large file. It be better if we could deterministically determine when initialisation is entirely finished and then set the scroll fraction at that point.
+    // TODO: The scroll fraction assignment still happens to soon if the initialisisation takes a long time, because we loaded a large file.  It be better if we could deterministically determine when initialisation is entirely finished and then set the scroll fraction at that point.
     DispatchQueue.main.async {
-        if let verticalScrollFraction = location?.wrappedValue.verticalScrollFraction {
-          scrollView.verticalScrollFraction = verticalScrollFraction
-        }
+      scrollView.verticalScrollFraction = position.verticalScrollFraction
     }
 
     // The minimap needs to be vertically positioned in dependence on the scroll position of the main code view and
@@ -234,36 +254,38 @@ extension CodeEditor: NSViewRepresentable {
       = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification,
                                                object: scrollView.contentView,
                                                queue: .main){ _ in
-        DispatchQueue.main.async {
-          location?.wrappedValue.verticalScrollFraction = scrollView.verticalScrollFraction
-        }
+
         codeView.adjustScrollPositionOfMinimap()
+        context.coordinator.scrollPositionDidChange(scrollView)
       }
 
     // Report the initial message set
-    DispatchQueue.main.async { updateMessages(in: codeView, with: context) }
+    DispatchQueue.main.async{ updateMessages(in: codeView, with: context) }
 
     return scrollView
   }
 
   public func updateNSView(_ scrollView: NSScrollView, context: Context) {
     guard let codeView = scrollView.documentView as? CodeView else { return }
+    context.coordinator.updatingView = true
     
     let theme                      = context.environment.codeEditorTheme,
-        selections                 = location?.wrappedValue.selections.map{ NSValue(range: $0) }
+        selections                 = position.selections.map{ NSValue(range: $0) }
 
     updateMessages(in: codeView, with: context)
     if text != codeView.string { codeView.string = text }  // Hoping for the string comparison fast path...
-    if let selections = selections, selections != codeView.selectedRanges { codeView.selectedRanges = selections }
-      if let verticalScrollFraction = location?.wrappedValue.verticalScrollFraction, verticalScrollFraction - scrollView.verticalScrollFraction > 0.0001 {
-          scrollView.verticalScrollFraction = verticalScrollFraction
+    if selections != codeView.selectedRanges { codeView.selectedRanges = selections }
+    if abs(position.verticalScrollFraction - scrollView.verticalScrollFraction) > 0.0001 {
+      scrollView.verticalScrollFraction = position.verticalScrollFraction
     }
     if theme.id != codeView.theme.id { codeView.theme = theme }
     if layout != codeView.viewLayout { codeView.viewLayout = layout }
+
+    context.coordinator.updatingView = false
   }
 
   public func makeCoordinator() -> Coordinator {
-    return Coordinator($text)
+    return Coordinator($text, $position)
   }
 
   public final class Coordinator: _Coordinator {
@@ -274,7 +296,24 @@ extension CodeEditor: NSViewRepresentable {
     }
 
     func textDidChange(_ textView: NSTextView) {
-      self.text = textView.string
+      guard !updatingView else { return }
+
+      if self.text != textView.string { self.text = textView.string }
+    }
+
+    func selectionDidChange(_ textView: NSTextView) {
+      guard !updatingView else { return }
+
+      let newValue = textView.selectedRanges.map{ $0.rangeValue }
+      if self.position.selections != newValue { self.position.selections = newValue }
+    }
+
+    func scrollPositionDidChange(_ scrollView: NSScrollView) {
+      guard !updatingView else { return }
+
+      if abs(position.verticalScrollFraction - scrollView.verticalScrollFraction) > 0.0001 {
+        position.verticalScrollFraction = scrollView.verticalScrollFraction
+      }
     }
   }
 }
@@ -322,7 +361,7 @@ extension EnvironmentValues {
   }
 }
 
-extension CodeEditor.Location: RawRepresentable {
+extension CodeEditor.Position: RawRepresentable, Codable {
 
   public init?(rawValue: String) {
 
@@ -341,7 +380,7 @@ extension CodeEditor.Location: RawRepresentable {
       selections             = components[0].components(separatedBy: ";").compactMap{ parseNSRange(lexeme: $0) }
       verticalScrollFraction = CGFloat(Double(components[1]) ?? 0)
 
-    } else { self = CodeEditor.Location() }
+    } else { self = CodeEditor.Position() }
   }
 
   public var rawValue: String {
@@ -358,6 +397,9 @@ extension CodeEditor.Location: RawRepresentable {
 struct CodeEditor_Previews: PreviewProvider {
 
   static var previews: some View {
-    CodeEditor(text: .constant("-- Hello World!"), location: nil, messages: .constant(Set()), language: .haskell)
+    CodeEditor(text: .constant("-- Hello World!"),
+               position: .constant(CodeEditor.Position()),
+               messages: .constant(Set()),
+               language: .haskell)
   }
 }
