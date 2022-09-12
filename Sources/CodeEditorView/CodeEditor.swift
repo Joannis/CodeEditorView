@@ -257,7 +257,10 @@ extension CodeEditor: NSViewRepresentable {
             }
             
         }
-        codeView.selectedRanges = position.selections.map{ NSValue(range: $0) }
+        let ranges = position.selections.map{ NSValue(range: $0) }
+        if !ranges.isEmpty {
+            codeView.selectedRanges = ranges
+        }
         
         // We can't set the scroll position right away as the views are not properly sized yet. Thus, this needs to be
         // delayed.
