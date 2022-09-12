@@ -97,12 +97,14 @@ public struct CodeEditor {
     
     public init(
         readOnlyText:     Binding<String>,
+        position: Binding<Position>,
+        messages: Binding<Set<Located<Message>>>,
         language: LanguageConfiguration = .none,
         layout:   LayoutConfiguration = .standard)
     {
         self._text     = readOnlyText
-        self._position = .constant(.init())
-        self._messages = .constant([])
+        self._position = position
+        self._messages = messages
         self.readOnly = true
         self.language  = language
         self.layout    = layout
